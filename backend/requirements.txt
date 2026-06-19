@@ -1,0 +1,23 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# Python dependencies – Fintoc + Google Sheets backend
+# Install with:  pip install -r requirements.txt
+# ─────────────────────────────────────────────────────────────────────────────
+
+# Web framework
+fastapi==0.111.0
+
+# ASGI server (run with: uvicorn main:app --reload)
+uvicorn[standard]==0.29.0
+
+# Fintoc Python SDK
+# Docs: https://docs.fintoc.com/docs/python-sdk
+fintoc==2.21.0
+
+# Google API client + authentication
+google-api-python-client==2.128.0
+google-auth==2.29.0
+google-auth-httplib2==0.2.0
+google-auth-oauthlib==1.2.0
+
+# Data validation (used by FastAPI internally; pinned for compatibility)
+pydantic==2.7.1

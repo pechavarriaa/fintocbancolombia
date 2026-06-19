@@ -1,0 +1,207 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Fintoc – Sincronización Bancolombia</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      background: #f4f6fa;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      min-height: 100vh;
+    }
+
+    .card {
+      background: #fff;
+      border-radius: 12px;
+      box-shadow: 0 4px 24px rgba(0, 0, 0, 0.10);
+      padding: 40px 32px;
+      max-width: 480px;
+      width: 100%;
+      text-align: center;
+    }
+
+    .card h1 {
+      font-size: 1.5rem;
+      color: #1a1a2e;
+      margin-bottom: 8px;
+    }
+
+    .card p.subtitle {
+      color: #6b7280;
+      font-size: 0.95rem;
+      margin-bottom: 32px;
+    }
+
+    .btn {
+      display: inline-block;
+      padding: 12px 28px;
+      border: none;
+      border-radius: 8px;
+      font-size: 1rem;
+      cursor: pointer;
+      transition: background 0.2s;
+    }
+
+    .btn-primary {
+      background: #4f46e5;
+      color: #fff;
+    }
+
+    .btn-primary:hover { background: #4338ca; }
+
+    .btn-primary:disabled {
+      background: #a5b4fc;
+      cursor: not-allowed;
+    }
+
+    #status {
+      margin-top: 24px;
+      font-size: 0.9rem;
+      min-height: 20px;
+    }
+
+    .status-success { color: #16a34a; }
+    .status-error   { color: #dc2626; }
+    .status-info    { color: #2563eb; }
+
+    .spinner {
+      display: inline-block;
+      width: 16px;
+      height: 16px;
+      border: 2px solid #a5b4fc;
+      border-top-color: #4f46e5;
+      border-radius: 50%;
+      animation: spin 0.7s linear infinite;
+      vertical-align: middle;
+      margin-right: 6px;
+    }
+
+    @keyframes spin { to { transform: rotate(360deg); } }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <h1>Sincronización Bancolombia</h1>
+    <p class="subtitle">
+      Conecta tu cuenta Bancolombia con Google Sheets.<br />
+      El widget maneja el Token Dinámico (MFA) de forma nativa.
+    </p>
+
+    <button id="connectBtn" class="btn btn-primary" onclick="openFintocWidget()">
+      Conectar con Fintoc
+    </button>
+
+    <div id="status"></div>
+  </div>
+
+  <!--
+    Fintoc Widget script.
+    Docs: https://docs.fintoc.com/docs/widget
+  -->
+  <script src="https://js.fintoc.com/v1/"></script>
+
+  <script>
+    // ─────────────────────────────────────────────────────────────────────────
+    // CONFIGURATION
+    // Replace PUBLIC_KEY with your Fintoc PUBLIC key (starts with "pk_").
+    // You can find it in your Fintoc dashboard → Settings → API Keys.
+    // ─────────────────────────────────────────────────────────────────────────
+    const FINTOC_PUBLIC_KEY = "pk_live_REPLACE_WITH_YOUR_PUBLIC_KEY";
+
+    // URL of the backend server (adjust port/host if you deployed elsewhere).
+    const BACKEND_URL = "http://localhost:8000";
+
+    // ─────────────────────────────────────────────────────────────────────────
+
+    const connectBtn = document.getElementById("connectBtn");
+    const statusEl   = document.getElementById("status");
+
+    function setStatus(message, type = "info") {
+      statusEl.className = `status-${type}`;
+      statusEl.innerHTML = message;
+    }
+
+    /**
+     * Opens the Fintoc Connect widget.
+     * The widget handles the full Bancolombia login flow including the
+     * Dynamic Token (MFA) challenge natively — no extra code needed.
+     */
+    function openFintocWidget() {
+      connectBtn.disabled = true;
+      setStatus('<span class="spinner"></span>Iniciando widget…', "info");
+
+      const widget = Fintoc.create({
+        publicKey: FINTOC_PUBLIC_KEY,
+
+        // Restrict the widget to Bancolombia only.
+        // Check https://docs.fintoc.com/docs/institutions for the full list.
+        institutionId: "cl_bancolombia",
+
+        product: "movements",           // We only need bank movements.
+        country: "co",                  // Colombia
+
+        /**
+         * onSuccess is called once the user has authenticated successfully.
+         * `data.link_token` contains the short-lived token we send to our backend.
+         */
+        onSuccess: function (data) {
+          const linkToken = data.link_token;
+          setStatus('<span class="spinner"></span>Autenticación exitosa. Sincronizando movimientos…', "info");
+          sendLinkTokenToBackend(linkToken);
+        },
+
+        onExit: function () {
+          connectBtn.disabled = false;
+          setStatus("El usuario cerró el widget sin completar el flujo.", "error");
+        },
+
+        onError: function (err) {
+          connectBtn.disabled = false;
+          setStatus(`Error en el widget: ${err.message || JSON.stringify(err)}`, "error");
+          console.error("Fintoc widget error:", err);
+        },
+      });
+
+      widget.open();
+    }
+
+    /**
+     * Sends the link_token obtained from the Fintoc widget to our FastAPI backend,
+     * which will then fetch transactions and append them to Google Sheets.
+     *
+     * @param {string} linkToken – Short-lived token returned by the widget.
+     */
+    async function sendLinkTokenToBackend(linkToken) {
+      try {
+        const response = await fetch(`${BACKEND_URL}/sync`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ link_token: linkToken }),
+        });
+
+        const result = await response.json();
+
+        if (!response.ok) {
+          throw new Error(result.detail || `HTTP ${response.status}`);
+        }
+
+        setStatus(
+          `✅ ${result.rows_written} movimiento(s) escrito(s) en Google Sheets.`,
+          "success"
+        );
+      } catch (error) {
+        setStatus(`❌ Error al sincronizar: ${error.message}`, "error");
+        console.error("Backend sync error:", error);
+      } finally {
+        connectBtn.disabled = false;
+      }
+    }
+  </script>
+</body>
+</html>
